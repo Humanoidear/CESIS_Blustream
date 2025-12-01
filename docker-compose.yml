@@ -1,0 +1,14 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cesis-blustream:latest
+    container_name: cesis-blustream
+    env_file:
+      - .env
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./json:/app/json
+    restart: unless-stopped
