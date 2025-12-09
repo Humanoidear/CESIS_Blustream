@@ -275,6 +275,13 @@ ${JSON.stringify(eventsArray, null, 2)}`;
         fs.mkdirSync(outputDir);
     }
     const outputPath = path.join(outputDir, 'structured_events.json');
+    
+    // Delete the old structured_events.json if it exists
+    if (fs.existsSync(outputPath)) {
+        fs.unlinkSync(outputPath);
+        console.log(`${new Date().toISOString()} - Deleted old structured_events.json`);
+    }
+    
     fs.writeFileSync(outputPath, JSON.stringify(parsedData, null, 2));
     console.log(`${new Date().toISOString()} -  Structured events saved to ${outputPath}`);
 
@@ -317,7 +324,7 @@ try {
 // Initial and recurring iCal parsing job
 if (!skipParse) {
     parseICal().catch(err => console.error('Startup iCal processing failed:', err));
-    cron.schedule('0 0 * * 0', () => {
+    cron.schedule('0 6 * * 1', () => {
         parseICal().catch(err => console.error('Scheduled iCal processing failed:', err));
     });
 }
