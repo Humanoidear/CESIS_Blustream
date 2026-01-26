@@ -321,6 +321,18 @@ try {
     console.error(`${new Date().toISOString()} - Error loading existing structured_events.json:`, err);
 }
 
+// Api endpoint to get structured events
+app.get('/structured_events', (req, res) => {
+    const jsonPath = path.join(__dirname, 'json', 'structured_events.json');
+    if (fs.existsSync(jsonPath)) {
+        const raw = fs.readFileSync(jsonPath, 'utf8');
+        const data = JSON.parse(raw);
+        res.json(data);
+    } else {
+        res.status(404).json({ error: 'structured_events.json not found' });
+    }
+});
+
 // Initial and recurring iCal parsing job
 if (!skipParse) {
     parseICal().catch(err => console.error('Startup iCal processing failed:', err));
