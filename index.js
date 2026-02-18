@@ -11,6 +11,14 @@ const { start } = require('repl');
 const app = express();
 const port = process.env.PORT || 3000;
 
+const STREAMS = require('./streams.json');
+
+const basicAuthHeader = () => {
+  const username = process.env.NETIO_USERNAME || '';
+  const password = process.env.NETIO_PASSWORD || '';
+  return 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
+};
+
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_KEY);
 const skipParse = process.env.SKIP_PARSE === 'true';
 // Track scheduled timeouts so we can clear/reschedule on new parses
@@ -46,7 +54,7 @@ function sendOutCommand(outputId, inputId) {
 }
 
 // Trigger the hardware commands for a single parsed event using its room_mappings
-function triggerEventMappings(event) {
+async function triggerEventMappings(event) {
     if (!event || !event.rooms || !Array.isArray(event.rooms.room_mappings)) {
         console.log(`${new Date().toISOString()} - No room_mappings for event at ${event && event.start_time}`);
         return;
@@ -62,6 +70,11 @@ function triggerEventMappings(event) {
         }
         // Send one POST per mapping. If the same output maps to multiple inputs, this sends the same OUT with different FR as requested.
         sendOutCommand(out, input);
+
+        // Turn ON
+        const name = mapping.input_room.name;
+        const ret = await NETIO_On(STREAMS[name]?.netio);
+        console.log(`${new Date().toISOString()} - NETIO_On for ${name} returned:`, ret);
     }
 }
 
@@ -86,7 +99,9 @@ function scheduleEventTriggers(parsedData) {
             if (delay <= 0) {
                 if (now - start.getTime() <= 60_000) {
                     console.log(`${new Date().toISOString()} - Event already started recently; triggering immediately: ${ev.start_time}`);
-                    triggerEventMappings(ev);
+                    triggerEventMappings(ev).catch((err) => {
+                      console.error(`${new Date().toISOString()} - Error triggering mappings for event ${ev.start_time}:`, err);
+                    });
                 }
                 return;
             }
@@ -97,12 +112,11 @@ function scheduleEventTriggers(parsedData) {
 
             const key = `${ev.start_time}-${idx}`;
             scheduledJobs[key] = setTimeout(() => {
-                try {
-                    triggerEventMappings(ev);
-                } catch (err) {
-                    console.error(`${new Date().toISOString()} - Error triggering mappings for event ${ev.start_time}:`, err);
-                }
+              triggerEventMappings(ev).catch((err) => {
+                console.error(`${new Date().toISOString()} - Error triggering mappings for event ${ev.start_time}:`, err);
+              }).finally(() => {
                 delete scheduledJobs[key];
+              });
             }, delay);
 
             console.log(`${new Date().toISOString()} - Scheduled hardware triggers for ${ev.start_time} (in ${Math.round(delay / 1000)}s)`);
@@ -320,6 +334,27 @@ try {
 } catch (err) {
     console.error(`${new Date().toISOString()} - Error loading existing structured_events.json:`, err);
 }
+
+async function NETIO_On(ip) {
+  try {
+    if (!ip) {
+        console.warn(`${new Date().toISOString()} - NETIO_On skipped (missing IP).`);
+        return "ERROR";
+    }
+    const netioRes = await fetch(`http://${ip}/netio.json`, {
+      method: 'POST',
+      headers: {
+        'Authorization': basicAuthHeader(),
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ Outputs: [{ ID: 1, Action: 1 }] })
+    });
+    
+    return netioRes.ok ? "OK" : "ERROR";
+  } catch (err) {
+    return "ERROR";
+  }
+};
 
 // Api endpoint to get structured events
 app.get('/structured_events', (req, res) => {

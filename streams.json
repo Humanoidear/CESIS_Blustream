@@ -1,0 +1,62 @@
+{
+  "2.06 SALA 1": {
+    "domo": ["172.31.17.58"],
+    "minidomo": ["172.31.16.234", "172.31.16.235"],
+    "netio": "172.31.17.143",
+    "audio": "http://capturebox11.uv.es/streams/1/flv"
+  },
+  "2.08 SALA 2": {
+    "domo": ["172.31.17.91"],
+    "minidomo": ["172.31.17.27", "172.31.17.28"],
+    "netio": "172.31.17.145",
+    "audio": "http://capturebox21.uv.es/streams/1/flv"
+  },
+  "2.10 SALA 3": {
+    "domo": ["172.31.17.82"],
+    "minidomo": ["172.31.17.32", "172.31.17.33"],
+    "netio": "172.31.17.173",
+    "audio": "http://capturebox31.uv.es/streams/1/flv"
+  },
+  "2.11 SALA4/UCI": {
+    "domo": ["172.31.17.83"],
+    "minidomo": ["172.31.17.37", "172.31.17.81"],
+    "netio": "172.31.17.158",
+    "audio": "http://capturebox41.uv.es/streams/1/flv"
+  },
+  "2.12 URGÈNCIES": {
+    "domo": ["172.31.17.84"],
+    "minidomo": ["172.31.17.41", "172.31.17.42"],
+    "netio": "172.31.17.159",
+    "audio": "http://capturebox51.uv.es/streams/1/flv"
+  },
+  "2.15 HOSPITALITZ": {
+    "domo": ["172.31.17.86"],
+    "minidomo": ["172.31.17.45", "172.31.17.46"],
+    "netio": "172.31.17.160",
+    "audio": "http://capturebox61.uv.es/streams/1/flv"
+  },
+  "3.10 DOMICILI": {
+    "domo": ["172.31.17.87"],
+    "minidomo": ["172.31.17.104", "172.31.17.105", "172.31.17.147"],
+    "netio": "172.31.17.161",
+    "audio": "http://capturebox71.uv.es/streams/1/flv"
+  },
+  "3.12 AMBULANCIA": {
+    "domo": ["172.31.17.88"],
+    "minidomo": ["172.31.17.110", "172.31.17.111", "172.31.18.47"],
+    "netio": "172.31.17.162",
+    "audio": "http://capturebox81.uv.es/streams/1/flv"
+  },
+  "3.13 QUIROFAN": {
+    "domo": ["172.31.17.89"],
+    "minidomo": ["172.31.17.116", "172.31.17.123"],
+    "netio": "172.31.17.163",
+    "audio": "http://capturebox91.uv.es/streams/1/flv"
+  },
+  "2.14 FISIOTERAP.": {
+    "domo": ["172.31.17.90"],
+    "minidomo": ["172.31.17.121", "172.31.17.122"],
+    "netio": "172.31.17.164",
+    "audio": "http://capturebox101.uv.es/streams/1/flv"
+  }
+}
