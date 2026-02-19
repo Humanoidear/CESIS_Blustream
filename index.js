@@ -71,10 +71,14 @@ async function triggerEventMappings(event) {
         // Send one POST per mapping. If the same output maps to multiple inputs, this sends the same OUT with different FR as requested.
         sendOutCommand(out, input);
 
-        // Turn ON
+        // Turn ON rack
         const name = mapping.input_room.name;
-        const ret = await NETIO_On(STREAMS[name]?.netio);
-        console.log(`${new Date().toISOString()} - NETIO_On for ${name} returned:`, ret);
+        const ret = await NETIO_On(STREAMS[name]?.netio, 1);
+        console.log(`${new Date().toISOString()} - NETIO_On for ${name} (rack) returned:`, ret);
+
+        // Turn ON camera
+        const ret2 = await NETIO_On(STREAMS[name]?.netio, 2);
+        console.log(`${new Date().toISOString()} - NETIO_On for ${name} (camera) returned:`, ret2);
     }
 }
 
@@ -335,7 +339,7 @@ try {
     console.error(`${new Date().toISOString()} - Error loading existing structured_events.json:`, err);
 }
 
-async function NETIO_On(ip) {
+async function NETIO_On(ip, action = 1) {
   try {
     if (!ip) {
         console.warn(`${new Date().toISOString()} - NETIO_On skipped (missing IP).`);
@@ -347,7 +351,7 @@ async function NETIO_On(ip) {
         'Authorization': basicAuthHeader(),
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ Outputs: [{ ID: 1, Action: 1 }] })
+      body: JSON.stringify({ Outputs: [{ ID: 1, Action: action }] })
     });
     
     return netioRes.ok ? "OK" : "ERROR";
