@@ -26,133 +26,133 @@ let scheduledJobs = {};
 
 // Send the POST request to the hardware endpoint to set an output to a given frame/input
 function sendOutCommand(outputId, inputId) {
-    const cmd = `OUT ${outputId} FR ${inputId}`;
-    const query = `?cmd=${encodeURIComponent(cmd)}`;
-    const options = {
-        hostname: '172.31.17.65',
-        port: 80,
-        path: `/cgi-bin/submit${query}`,
-        method: 'POST',
-        headers: {
-            'Content-Length': 0
-        }
-    };
+  const cmd = `OUT ${outputId} FR ${inputId}`;
+  const query = `?cmd=${encodeURIComponent(cmd)}`;
+  const options = {
+    hostname: '172.31.17.65',
+    port: 80,
+    path: `/cgi-bin/submit${query}`,
+    method: 'POST',
+    headers: {
+      'Content-Length': 0
+    }
+  };
 
-    const req = http.request(options, (res) => {
-        let body = '';
-        res.on('data', chunk => body += chunk.toString());
-        res.on('end', () => {
-            console.log(`${new Date().toISOString()} - Sent '${cmd}' -> ${res.statusCode} ${body ? '- ' + body : ''}`);
-        });
+  const req = http.request(options, (res) => {
+    let body = '';
+    res.on('data', chunk => body += chunk.toString());
+    res.on('end', () => {
+      console.log(`${new Date().toISOString()} - Sent '${cmd}' -> ${res.statusCode} ${body ? '- ' + body : ''}`);
     });
+  });
 
-    req.on('error', (err) => {
-        console.error(`${new Date().toISOString()} - Error sending '${cmd}':`, err.message || err);
-    });
+  req.on('error', (err) => {
+    console.error(`${new Date().toISOString()} - Error sending '${cmd}':`, err.message || err);
+  });
 
-    req.end();
+  req.end();
 }
 
 // Trigger the hardware commands for a single parsed event using its room_mappings
 async function triggerEventMappings(event) {
-    if (!event || !event.rooms || !Array.isArray(event.rooms.room_mappings)) {
-        console.log(`${new Date().toISOString()} - No room_mappings for event at ${event && event.start_time}`);
-        return;
+  if (!event || !event.rooms || !Array.isArray(event.rooms.room_mappings)) {
+    console.log(`${new Date().toISOString()} - No room_mappings for event at ${event && event.start_time}`);
+    return;
+  }
+
+  console.log(`${new Date().toISOString()} - Triggering hardware for event starting ${event.start_time}`);
+  for (const mapping of event.rooms.room_mappings) {
+    const out = mapping.output_room && mapping.output_room.id;
+    const input = mapping.input_room && mapping.input_room.id;
+    if (out == null || input == null) {
+      console.warn(`${new Date().toISOString()} - Skipping mapping with missing ids:`, mapping);
+      continue;
     }
+    // Send one POST per mapping. If the same output maps to multiple inputs, this sends the same OUT with different FR as requested.
+    sendOutCommand(out, input);
 
-    console.log(`${new Date().toISOString()} - Triggering hardware for event starting ${event.start_time}`);
-    for (const mapping of event.rooms.room_mappings) {
-        const out = mapping.output_room && mapping.output_room.id;
-        const input = mapping.input_room && mapping.input_room.id;
-        if (out == null || input == null) {
-            console.warn(`${new Date().toISOString()} - Skipping mapping with missing ids:`, mapping);
-            continue;
-        }
-        // Send one POST per mapping. If the same output maps to multiple inputs, this sends the same OUT with different FR as requested.
-        sendOutCommand(out, input);
+    // Turn ON rack
+    const name = mapping.input_room.name;
+    const ret = await NETIO_On(STREAMS[name]?.netio, 1);
+    console.log(`${new Date().toISOString()} - NETIO_On for ${name} (rack) returned:`, ret);
 
-        // Turn ON rack
-        const name = mapping.input_room.name;
-        const ret = await NETIO_On(STREAMS[name]?.netio, 1);
-        console.log(`${new Date().toISOString()} - NETIO_On for ${name} (rack) returned:`, ret);
-
-        // Turn ON camera
-        const ret2 = await NETIO_On(STREAMS[name]?.netio, 2);
-        console.log(`${new Date().toISOString()} - NETIO_On for ${name} (camera) returned:`, ret2);
-    }
+    // Turn ON camera
+    const ret2 = await NETIO_On(STREAMS[name]?.netio, 2);
+    console.log(`${new Date().toISOString()} - NETIO_On for ${name} (camera) returned:`, ret2);
+  }
 }
 
 // Schedule triggers for all parsed events. Clears previously scheduled jobs to avoid duplicates.
 function scheduleEventTriggers(parsedData) {
-    try {
-        // clear existing
-        for (const key of Object.keys(scheduledJobs)) {
-            clearTimeout(scheduledJobs[key]);
-        }
-        scheduledJobs = {};
-
-        if (!Array.isArray(parsedData)) return;
-
-        parsedData.forEach((ev, idx) => {
-            if (!ev || !ev.start_time) return;
-            const start = new Date(ev.start_time);
-            const now = Date.now();
-            const delay = start.getTime() - now;
-
-            // If it already started within the last minute, trigger immediately
-            if (delay <= 0) {
-                if (now - start.getTime() <= 60_000) {
-                    console.log(`${new Date().toISOString()} - Event already started recently; triggering immediately: ${ev.start_time}`);
-                    triggerEventMappings(ev).catch((err) => {
-                      console.error(`${new Date().toISOString()} - Error triggering mappings for event ${ev.start_time}:`, err);
-                    });
-                }
-                return;
-            }
-
-            // Avoid scheduling extremely far in the future (e.g., more than 30 days)
-            const maxDelay = 30 * 24 * 60 * 60 * 1000;
-            if (delay > maxDelay) return;
-
-            const key = `${ev.start_time}-${idx}`;
-            scheduledJobs[key] = setTimeout(() => {
-              triggerEventMappings(ev).catch((err) => {
-                console.error(`${new Date().toISOString()} - Error triggering mappings for event ${ev.start_time}:`, err);
-              }).finally(() => {
-                delete scheduledJobs[key];
-              });
-            }, delay);
-
-            console.log(`${new Date().toISOString()} - Scheduled hardware triggers for ${ev.start_time} (in ${Math.round(delay / 1000)}s)`);
-        });
-    } catch (err) {
-        console.error(`${new Date().toISOString()} - scheduleEventTriggers error:`, err);
+  try {
+    // clear existing
+    for (const key of Object.keys(scheduledJobs)) {
+      clearTimeout(scheduledJobs[key]);
     }
+    scheduledJobs = {};
+
+    if (!Array.isArray(parsedData)) return;
+
+    parsedData.forEach((ev, idx) => {
+      if (!ev || !ev.start_time) return;
+      const start = new Date(ev.start_time);
+      const now = Date.now();
+      const delay = start.getTime() - now;
+
+      // If it already started within the last minute, trigger immediately
+      if (delay <= 0) {
+        if (now - start.getTime() <= 60_000) {
+          console.log(`${new Date().toISOString()} - Event already started recently; triggering immediately: ${ev.start_time}`);
+          triggerEventMappings(ev).catch((err) => {
+            console.error(`${new Date().toISOString()} - Error triggering mappings for event ${ev.start_time}:`, err);
+          });
+        }
+        return;
+      }
+
+      // Avoid scheduling extremely far in the future (e.g., more than 30 days)
+      const maxDelay = 30 * 24 * 60 * 60 * 1000;
+      if (delay > maxDelay) return;
+
+      const key = `${ev.start_time}-${idx}`;
+      scheduledJobs[key] = setTimeout(() => {
+        triggerEventMappings(ev).catch((err) => {
+          console.error(`${new Date().toISOString()} - Error triggering mappings for event ${ev.start_time}:`, err);
+        }).finally(() => {
+          delete scheduledJobs[key];
+        });
+      }, delay);
+
+      console.log(`${new Date().toISOString()} - Scheduled hardware triggers for ${ev.start_time} (in ${Math.round(delay / 1000)}s)`);
+    });
+  } catch (err) {
+    console.error(`${new Date().toISOString()} - scheduleEventTriggers error:`, err);
+  }
 }
 
 // Parse iCal and structure events using Gemini AI, then save it to structured_events.json
 async function parseICal() {
-    console.log(`${new Date().toISOString()} - Starting iCal parsing and structuring process...`);
-    const icalUrl = process.env.ICAL_URL;
+  console.log(`${new Date().toISOString()} - Starting iCal parsing and structuring process...`);
+  const icalUrl = process.env.ICAL_URL;
 
-    const events = await ical.async.fromURL(icalUrl);
+  const events = await ical.async.fromURL(icalUrl);
 
-    const eventsArray = Object.values(events).map(event => ({
-        type: event.type,
-        summary: event.summary,
-        description: event.description,
-        start: event.start,
-        end: event.end,
-        location: event.location,
-        organizer: event.organizer,
-        attendees: event.attendee,
-        status: event.status,
-        uid: event.uid
-    }));
+  const eventsArray = Object.values(events).map(event => ({
+    type: event.type,
+    summary: event.summary,
+    description: event.description,
+    start: event.start,
+    end: event.end,
+    location: event.location,
+    organizer: event.organizer,
+    attendees: event.attendee,
+    status: event.status,
+    uid: event.uid
+  }));
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
-    const prompt = `You are a calendar event parser. Parse the following iCal events and return a clean, structured JSON array.
+  const prompt = `You are a calendar event parser. Parse the following iCal events and return a clean, structured JSON array.
 There are different classes assigned to an event (inside the event title you can get all the information you need)
 
 Here is an example:
@@ -283,67 +283,67 @@ This is an example of the expected output:
 Events data:
 ${JSON.stringify(eventsArray, null, 2)}`;
 
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    let structuredData = response.text().replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-    const parsedData = JSON.parse(structuredData);
+  const result = await model.generateContent(prompt);
+  const response = await result.response;
+  let structuredData = response.text().replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+  const parsedData = JSON.parse(structuredData);
 
-    const outputDir = path.join(__dirname, 'json');
-    if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir);
-    }
-    const outputPath = path.join(outputDir, 'structured_events.json');
-    
-    // Delete the old structured_events.json if it exists
-    if (fs.existsSync(outputPath)) {
-        fs.unlinkSync(outputPath);
-        console.log(`${new Date().toISOString()} - Deleted old structured_events.json`);
-    }
-    
-    fs.writeFileSync(outputPath, JSON.stringify(parsedData, null, 2));
-    console.log(`${new Date().toISOString()} -  Structured events saved to ${outputPath}`);
+  const outputDir = path.join(__dirname, 'json');
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir);
+  }
+  const outputPath = path.join(outputDir, 'structured_events.json');
 
-    // Schedule hardware triggers for the parsed events
-    try {
-        scheduleEventTriggers(parsedData);
-    } catch (err) {
-        console.error(`${new Date().toISOString()} - Failed to schedule event triggers:`, err);
-    }
+  // Delete the old structured_events.json if it exists
+  if (fs.existsSync(outputPath)) {
+    fs.unlinkSync(outputPath);
+    console.log(`${new Date().toISOString()} - Deleted old structured_events.json`);
+  }
 
-    // Invalidate cache to force reload on next request
-    cacheTimestamp = null;
+  fs.writeFileSync(outputPath, JSON.stringify(parsedData, null, 2));
+  console.log(`${new Date().toISOString()} -  Structured events saved to ${outputPath}`);
 
-    return { originalEventCount: eventsArray.length, structuredEvents: parsedData };
+  // Schedule hardware triggers for the parsed events
+  try {
+    scheduleEventTriggers(parsedData);
+  } catch (err) {
+    console.error(`${new Date().toISOString()} - Failed to schedule event triggers:`, err);
+  }
+
+  // Invalidate cache to force reload on next request
+  cacheTimestamp = null;
+
+  return { originalEventCount: eventsArray.length, structuredEvents: parsedData };
 }
 
 app.listen(port, () => {
-    console.log(`CESIS Bluestream Server listening on port ${port}`);
+  console.log(`CESIS Bluestream Server listening on port ${port}`);
 });
 
 // On startup, attempt to schedule triggers from existing structured_events.json so triggers run even if AI parsing is skipped
 try {
-    const existingPath = path.join(__dirname, 'json', 'structured_events.json');
-    if (fs.existsSync(existingPath)) {
-        const raw = fs.readFileSync(existingPath, 'utf8');
-        const data = JSON.parse(raw);
-        if (Array.isArray(data)) {
-            scheduleEventTriggers(data);
-            console.log(`${new Date().toISOString()} - Scheduled events from existing ${existingPath}`);
-        } else {
-            console.warn(`${new Date().toISOString()} - Existing structured_events.json is not an array; skipping scheduling.`);
-        }
+  const existingPath = path.join(__dirname, 'json', 'structured_events.json');
+  if (fs.existsSync(existingPath)) {
+    const raw = fs.readFileSync(existingPath, 'utf8');
+    const data = JSON.parse(raw);
+    if (Array.isArray(data)) {
+      scheduleEventTriggers(data);
+      console.log(`${new Date().toISOString()} - Scheduled events from existing ${existingPath}`);
     } else {
-        console.log(`${new Date().toISOString()} - No existing structured_events.json to load on startup.`);
+      console.warn(`${new Date().toISOString()} - Existing structured_events.json is not an array; skipping scheduling.`);
     }
+  } else {
+    console.log(`${new Date().toISOString()} - No existing structured_events.json to load on startup.`);
+  }
 } catch (err) {
-    console.error(`${new Date().toISOString()} - Error loading existing structured_events.json:`, err);
+  console.error(`${new Date().toISOString()} - Error loading existing structured_events.json:`, err);
 }
 
 async function NETIO_On(ip, action = 1) {
   try {
     if (!ip) {
-        console.warn(`${new Date().toISOString()} - NETIO_On skipped (missing IP).`);
-        return "ERROR";
+      console.warn(`${new Date().toISOString()} - NETIO_On skipped (missing IP).`);
+      return "ERROR";
     }
     const netioRes = await fetch(`http://${ip}/netio.json`, {
       method: 'POST',
@@ -351,9 +351,9 @@ async function NETIO_On(ip, action = 1) {
         'Authorization': basicAuthHeader(),
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ Outputs: [{ ID: 1, Action: action }] })
+      body: JSON.stringify({ Outputs: [{ ID: action, Action: 1 }] })
     });
-    
+
     return netioRes.ok ? "OK" : "ERROR";
   } catch (err) {
     return "ERROR";
@@ -362,20 +362,20 @@ async function NETIO_On(ip, action = 1) {
 
 // Api endpoint to get structured events
 app.get('/structured_events', (req, res) => {
-    const jsonPath = path.join(__dirname, 'json', 'structured_events.json');
-    if (fs.existsSync(jsonPath)) {
-        const raw = fs.readFileSync(jsonPath, 'utf8');
-        const data = JSON.parse(raw);
-        res.json(data);
-    } else {
-        res.status(404).json({ error: 'structured_events.json not found' });
-    }
+  const jsonPath = path.join(__dirname, 'json', 'structured_events.json');
+  if (fs.existsSync(jsonPath)) {
+    const raw = fs.readFileSync(jsonPath, 'utf8');
+    const data = JSON.parse(raw);
+    res.json(data);
+  } else {
+    res.status(404).json({ error: 'structured_events.json not found' });
+  }
 });
 
 // Initial and recurring iCal parsing job
 if (!skipParse) {
-    parseICal().catch(err => console.error('Startup iCal processing failed:', err));
-    cron.schedule('0 6 * * 1', () => {
-        parseICal().catch(err => console.error('Scheduled iCal processing failed:', err));
-    });
+  parseICal().catch(err => console.error('Startup iCal processing failed:', err));
+  cron.schedule('0 6 * * 1', () => {
+    parseICal().catch(err => console.error('Scheduled iCal processing failed:', err));
+  });
 }
