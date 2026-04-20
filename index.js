@@ -23,6 +23,24 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_KEY);
 const skipParse = process.env.SKIP_PARSE === 'true';
 // Track scheduled timeouts so we can clear/reschedule on new parses
 let scheduledJobs = {};
+let parseRetryTimeout = null;
+
+function scheduleParseRetry() {
+  if (parseRetryTimeout) {
+    console.log(`${new Date().toISOString()} - iCal parse retry already scheduled; skipping duplicate retry timer.`);
+    return;
+  }
+
+  parseRetryTimeout = setTimeout(() => {
+    parseRetryTimeout = null;
+    console.log(`${new Date().toISOString()} - Retrying iCal parsing after previous failure...`);
+    parseICal().catch((err) => {
+      console.error(`${new Date().toISOString()} - iCal retry failed:`, err);
+    });
+  }, 60 * 60 * 1000);
+
+  console.log(`${new Date().toISOString()} - Scheduled iCal parsing retry in 1 hour.`);
+}
 
 // Send the POST request to the hardware endpoint to set an output to a given frame/input
 function sendOutCommand(outputId, inputId) {
@@ -133,26 +151,28 @@ function scheduleEventTriggers(parsedData) {
 // Parse iCal and structure events using Gemini AI, then save it to structured_events.json
 async function parseICal() {
   console.log(`${new Date().toISOString()} - Starting iCal parsing and structuring process...`);
-  const icalUrl = process.env.ICAL_URL;
 
-  const events = await ical.async.fromURL(icalUrl);
+  try {
+    const icalUrl = process.env.ICAL_URL;
 
-  const eventsArray = Object.values(events).map(event => ({
-    type: event.type,
-    summary: event.summary,
-    description: event.description,
-    start: event.start,
-    end: event.end,
-    location: event.location,
-    organizer: event.organizer,
-    attendees: event.attendee,
-    status: event.status,
-    uid: event.uid
-  }));
+    const events = await ical.async.fromURL(icalUrl);
 
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const eventsArray = Object.values(events).map(event => ({
+      type: event.type,
+      summary: event.summary,
+      description: event.description,
+      start: event.start,
+      end: event.end,
+      location: event.location,
+      organizer: event.organizer,
+      attendees: event.attendee,
+      status: event.status,
+      uid: event.uid
+    }));
 
-  const prompt = `You are a calendar event parser. Parse the following iCal events and return a clean, structured JSON array.
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+    const prompt = `You are a calendar event parser. Parse the following iCal events and return a clean, structured JSON array.
 There are different classes assigned to an event (inside the event title you can get all the information you need)
 
 Here is an example:
@@ -283,37 +303,48 @@ This is an example of the expected output:
 Events data:
 ${JSON.stringify(eventsArray, null, 2)}`;
 
-  const result = await model.generateContent(prompt);
-  const response = await result.response;
-  let structuredData = response.text().replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-  const parsedData = JSON.parse(structuredData);
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    let structuredData = response.text().replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    const parsedData = JSON.parse(structuredData);
 
-  const outputDir = path.join(__dirname, 'json');
-  if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir);
-  }
-  const outputPath = path.join(outputDir, 'structured_events.json');
+    const outputDir = path.join(__dirname, 'json');
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir);
+    }
+    const outputPath = path.join(outputDir, 'structured_events.json');
 
-  // Delete the old structured_events.json if it exists
-  if (fs.existsSync(outputPath)) {
-    fs.unlinkSync(outputPath);
-    console.log(`${new Date().toISOString()} - Deleted old structured_events.json`);
-  }
+    // Delete the old structured_events.json if it exists
+    if (fs.existsSync(outputPath)) {
+      fs.unlinkSync(outputPath);
+      console.log(`${new Date().toISOString()} - Deleted old structured_events.json`);
+    }
 
-  fs.writeFileSync(outputPath, JSON.stringify(parsedData, null, 2));
-  console.log(`${new Date().toISOString()} -  Structured events saved to ${outputPath}`);
+    fs.writeFileSync(outputPath, JSON.stringify(parsedData, null, 2));
+    console.log(`${new Date().toISOString()} -  Structured events saved to ${outputPath}`);
 
-  // Schedule hardware triggers for the parsed events
-  try {
-    scheduleEventTriggers(parsedData);
+    // Schedule hardware triggers for the parsed events
+    try {
+      scheduleEventTriggers(parsedData);
+    } catch (err) {
+      console.error(`${new Date().toISOString()} - Failed to schedule event triggers:`, err);
+    }
+
+    // Invalidate cache to force reload on next request
+    cacheTimestamp = null;
+
+    if (parseRetryTimeout) {
+      clearTimeout(parseRetryTimeout);
+      parseRetryTimeout = null;
+      console.log(`${new Date().toISOString()} - Cleared pending iCal retry after successful parse.`);
+    }
+
+    return { originalEventCount: eventsArray.length, structuredEvents: parsedData };
   } catch (err) {
-    console.error(`${new Date().toISOString()} - Failed to schedule event triggers:`, err);
+    console.error(`${new Date().toISOString()} - iCal parsing failed:`, err);
+    scheduleParseRetry();
+    throw err;
   }
-
-  // Invalidate cache to force reload on next request
-  cacheTimestamp = null;
-
-  return { originalEventCount: eventsArray.length, structuredEvents: parsedData };
 }
 
 app.listen(port, () => {
